@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="fa">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>آلبوم خاطرات پدر</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: #0a0a0a; color: #fff; font-family: Tahoma, sans-serif; overflow-x: hidden; width: 100vw; height: 550vh; }
+        #canvas-container { position: fixed; top: 0; left: 0; width: 100%; height: 100vh; z-index: 1; }
+
+        .ui-layer { position: fixed; z-index: 10; pointer-events: none; width: 100%; height: 100vh; display: flex; flex-direction: column; justify-content: space-between; padding: 2rem; }
+        .ui-top, .ui-bottom { text-align: center; opacity: 0; animation: fadeIn 2s forwards; }
+        .ui-bottom { animation-delay: 1s; }
+
+        h1 { font-size: 1.2rem; font-weight: 400; letter-spacing: 0.2em; margin-bottom: 1rem; color: #ffd700; }
+        p.subtitle { font-size: 0.8rem; color: #aaa; letter-spacing: 0.1em; }
+
+        #loading { position: fixed; inset: 0; z-index: 50; background: #0a0a0a; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1rem; transition: opacity 0.8s; }
+        #loading.hide { opacity: 0; pointer-events: none; }
+        .spinner { width: 42px; height: 42px; border: 2px solid rgba(255,215,0,0.2); border-top-color: #ffd700; border-radius: 50%; animation: spin 1s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        #loading span { color: #aaa; font-size: 0.8rem; letter-spacing: 0.1em; }
+
+        #tooltip { position: fixed; z-index: 20; pointer-events: none; background: rgba(0,0,0,0.8); border: 1px solid #ffd700; padding: 0.8rem 1.2rem; border-radius: 4px; transform: translate(-50%, -150%); opacity: 0; transition: opacity 0.3s; text-align: center; direction: rtl; }
+        #tooltip.active { opacity: 1; transform: translate(-50%, -120%); }
+        #tooltip h3 { font-size: 0.85rem; margin-bottom: 0.2rem; color: #ffd700; }
+        #tooltip span { font-size: 0.65rem; color: #aaa; display: block; }
+
+        #modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 100; background: rgba(0,0,0,0.96); display: flex; align-items: center; justify-content: center; opacity: 0; pointer-events: none; transition: opacity 0.5s; padding: 2rem; }
+        #modal.active { opacity: 1; pointer-events: all; }
+        .modal-content { text-align: center; max-width: 92vw; max-height: 92vh; display: flex; flex-direction: column; align-items: center; gap: 1rem; }
+        .modal-content img { max-width: 90vw; max-height: 74vh; border: 1px solid #ffd700; border-radius: 6px; box-shadow: 0 0 60px rgba(255,215,0,0.15); }
+        .modal-content p { color: #ddd; font-size: 1rem; }
+
+        .close-btn { background: transparent; border: 1px solid #ffd700; color: #ffd700; padding: 0.7rem 2rem; font-size: 0.95rem; cursor: pointer; transition: all 0.3s; font-family: Tahoma, sans-serif; border-radius: 4px; }
+        .close-btn:hover { background: #ffd700; color: #000; }
+
+        @keyframes fadeIn { to { opacity: 1; } }
+        @media (max-width: 768px) { body { height: 480vh; } }
+    </style>
+</head>
+<body>
+    <div id="loading">
+        <div class="spinner"></div>
+        <span>در حال بارگذاری خاطرات...</span>
+    </div>
+
+    <div id="canvas-container"></div>
+
+    <div class="ui-layer">
+        <div class="ui-top">
+            <h1>آلبوم خاطرات بابا</h1>
+            <p class="subtitle">[ برای چرخاندن، بکشید ]</p>
+            <p class="subtitle" style="margin-top: 0.5rem; color: #ffd700;">[ برای دیدن عکس‌ها، اسکرول کنید ]</p>
+        </div>
+        <div class="ui-bottom">
+            <p class="subtitle" id="project-count">۱۹ عکس به یاد ماندنی</p>
+        </div>
+    </div>
+
+    <div id="tooltip">
+        <h3 id="tooltip-title"></h3>
+        <span id="tooltip-category"></span>
+    </div>
+
+    <div id="modal">
+        <div class="modal-content">
+            <img id="modal-img" src="" alt="خاطره">
+            <button class="close-btn" onclick="closeModal()">بستن</button>
+        </div>
+    </div>
+
+    <script type="importmap">
+        { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+
+        const CONFIG = {
+            imageCount: 19,
+            sphereRadius: window.innerWidth < 768 ? 8.5 : 12,   // جمع‌تر / فشرده‌تر
+            scrollLerp: 0.06,
+            rotationLerp: 0.08,
+            dragSensitivity: 0.005,
+            inertiaDecay: 0.95
+        };
+
+        let scene, camera, renderer, imageGroup;
+        let meshes = [];
+        let scrollProgress = 0;
+        let targetScrollProgress = 0;
+        let isDragging = false;
+        let previousMousePosition = { x: 0, y: 0 };
+        let targetRotation = { x: 0, y: 0 };
+        let currentRotation = { x: 0, y: 0 };
+        let velocity = { x: 0, y: 0 };
+        let autoRotate = true;
+
+        const raycaster = new THREE.Raycaster();
+        const pointer = new THREE.Vector2();
+        let hoveredMesh = null;
+
+        const tooltip = document.getElementById('tooltip');
+        const tooltipTitle = document.getElementById('tooltip-title');
+        const tooltipCategory = document.getElementById('tooltip-category');
+        const modal = document.getElementById('modal');
+        const modalImg = document.getElementById('modal-img');
+        const container = document.getElementById('canvas-container');
+        const projectCount = document.getElementById('project-count');
+        const loadingEl = document.getElementById('loading');
+
+        const photoFiles = [];
+        for (let i = 1; i <= CONFIG.imageCount; i++) {
+            photoFiles.push(`assets/photos/photo${String(i).padStart(2, '0')}.jpg`);
+        }
+
+        const memories = [
+            "بعدازظهر زیر درخت‌ها", "لحظه‌ای برای دو نفر", "خنده‌ی صمیمی",
+            "کنار هم در پارک", "یادگاری با بابا", "لبخند گرم",
+            "نگاهی به دوردست", "در آغوش گرم پدر", "بغل بابابزرگ",
+            "کنار درخت کهنسال", "خنده‌های خانوادگی", "با هم در طبیعت",
+            "کودکی شیرین", "نگاه به آسمان", "قدم زدن آرام",
+            "پاییز و خاطره", "لحظه‌ی بازی", "خنده‌ی کودکانه", "حس آزادی"
+        ];
+
+        const textureLoader = new THREE.TextureLoader();
+        let loadedCount = 0;
+
+        function init() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color('#0a0a0a');
+
+            camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.z = window.innerWidth < 768 ? 22 : 28;
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            container.appendChild(renderer.domElement);
+
+            imageGroup = new THREE.Group();
+            scene.add(imageGroup);
+
+            projectCount.textContent = `${CONFIG.imageCount} عکس به یاد ماندنی`;
+
+            generateImages();
+
+            window.addEventListener('resize', onWindowResize);
+            window.addEventListener('scroll', onScroll);
+            container.addEventListener('mousedown', onPointerDown);
+            window.addEventListener('mousemove', onPointerMove);
+            window.addEventListener('mouseup', onPointerUp);
+            container.addEventListener('click', onClick);
+            container.addEventListener('touchstart', onPointerDown, { passive: false });
+            window.addEventListener('touchmove', onPointerMove, { passive: false });
+            window.addEventListener('touchend', onPointerUp);
+
+            animate();
+        }
+
+        function generateImages() {
+            const geometry = new THREE.PlaneGeometry(2.6, 3.5, 1, 1);
+            const phi = Math.PI * (3 - Math.sqrt(5));
+
+            for (let i = 0; i < CONFIG.imageCount; i++) {
+                const material = new THREE.MeshBasicMaterial({ color: 0x1a1a1a, side: THREE.DoubleSide, transparent: true, opacity: 0 });
+                const mesh = new THREE.Mesh(geometry, material);
+
+                textureLoader.load(photoFiles[i], (texture) => {
+                    texture.colorSpace = THREE.SRGBColorSpace;
+                    material.map = texture;
+
+                    const img = texture.image;
+                    const aspect = img.width / img.height;
+                    const baseH = 3.5;
+                    const baseW = baseH * aspect;
+                    const maxW = 3.0;
+                    const finalW = Math.min(baseW, maxW);
+                    const finalH = finalW / aspect;
+                    mesh.geometry.dispose();
+                    mesh.geometry = new THREE.PlaneGeometry(finalW, finalH);
+
+                    material.needsUpdate = true;
+                    loadedCount++;
+                    if (loadedCount >= CONFIG.imageCount) {
+                        loadingEl.classList.add('hide');
+                    }
+                    fadeInMaterial(material);
+                }, undefined, () => {
+                    loadedCount++;
+                    if (loadedCount >= CONFIG.imageCount) loadingEl.classList.add('hide');
+                });
+
+                // پخش اولیه‌ی تصادفی (ورود پراکنده - "پلی شدن")
+                const scatterRadius = 30;
+                const initX = (Math.random() - 0.5) * scatterRadius * 1.6;
+                const initY = (Math.random() - 0.5) * scatterRadius;
+                const initZ = (Math.random() - 0.5) * 20 - 8;
+
+                // چیدمان نهایی: کره‌ای جمع و منظم (Fibonacci sphere)
+                const y = 1 - (i / (CONFIG.imageCount - 1)) * 2;
+                const radiusAtY = Math.sqrt(1 - y * y);
+                const theta = phi * i;
+
+                const targetX = Math.cos(theta) * radiusAtY * CONFIG.sphereRadius;
+                const targetY = y * CONFIG.sphereRadius;
+                const targetZ = Math.sin(theta) * radiusAtY * CONFIG.sphereRadius;
+
+                const dummyObj = new THREE.Object3D();
+                dummyObj.position.set(targetX, targetY, targetZ);
+                dummyObj.lookAt(0, 0, 0);
+                dummyObj.rotation.y += Math.PI;
+
+                mesh.userData = {
+                    id: i + 1,
+                    initialPos: new THREE.Vector3(initX, initY, initZ),
+                    targetPos: new THREE.Vector3(targetX, targetY, targetZ),
+                    initialQuat: new THREE.Quaternion().setFromEuler(new THREE.Euler(
+                        (Math.random() - 0.5) * Math.PI,
+                        (Math.random() - 0.5) * Math.PI,
+                        (Math.random() - 0.5) * Math.PI
+                    )),
+                    targetQuat: dummyObj.quaternion.clone(),
+                    title: memories[i] || `خاطره ${i + 1}`,
+                    category: "خاطره خانوادگی",
+                    material: material
+                };
+
+                mesh.position.copy(mesh.userData.initialPos);
+                mesh.quaternion.copy(mesh.userData.initialQuat);
+                const baseScale = 0.85 + Math.random() * 0.3;
+                mesh.scale.set(baseScale, baseScale, baseScale);
+                mesh.userData.baseScale = baseScale;
+
+                imageGroup.add(mesh);
+                meshes.push(mesh);
+            }
+        }
+
+        function fadeInMaterial(material) {
+            let op = 0;
+            const step = () => {
+                op += 0.05;
+                material.opacity = Math.min(op, 1);
+                if (op < 1) requestAnimationFrame(step);
+            };
+            step();
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            targetScrollProgress = Math.min(window.scrollY / (document.body.scrollHeight - window.innerHeight), 1);
+            scrollProgress += (targetScrollProgress - scrollProgress) * CONFIG.scrollLerp;
+
+            // وقتی کاملا به فرم نهایی (کره جمع‌وجور) رسید، چرخش آرام خودکار شروع می‌شود
+            if (scrollProgress > 0.96 && !isDragging && Math.abs(velocity.x) < 0.001 && Math.abs(velocity.y) < 0.001) {
+                targetRotation.y += 0.0012;
+            }
+
+            for (let i = 0; i < meshes.length; i++) {
+                const mesh = meshes[i];
+                const data = mesh.userData;
+
+                mesh.position.lerpVectors(data.initialPos, data.targetPos, scrollProgress);
+                mesh.quaternion.slerpQuaternions(data.initialQuat, data.targetQuat, scrollProgress);
+
+                if (hoveredMesh === mesh) {
+                    const targetScale = data.baseScale * 1.18;
+                    mesh.scale.lerp(new THREE.Vector3(targetScale, targetScale, targetScale), 0.1);
+                } else {
+                    mesh.scale.lerp(new THREE.Vector3(data.baseScale, data.baseScale, data.baseScale), 0.1);
+                }
+            }
+
+            if (!isDragging) {
+                velocity.x *= CONFIG.inertiaDecay;
+                velocity.y *= CONFIG.inertiaDecay;
+
+                targetRotation.y += velocity.x;
+                targetRotation.x += velocity.y;
+            }
+
+            targetRotation.x = Math.max(-Math.PI / 3, Math.min(Math.PI / 3, targetRotation.x));
+
+            currentRotation.x += (targetRotation.x - currentRotation.x) * CONFIG.rotationLerp;
+            currentRotation.y += (targetRotation.y - currentRotation.y) * CONFIG.rotationLerp;
+
+            imageGroup.rotation.x = currentRotation.x;
+            imageGroup.rotation.y = currentRotation.y;
+
+            checkIntersection();
+            renderer.render(scene, camera);
+        }
+
+        function onPointerDown(event) {
+            isDragging = true;
+            velocity.x = 0;
+            velocity.y = 0;
+
+            const clientX = event.touches ? event.touches[0].clientX : event.clientX;
+            const clientY = event.touches ? event.touches[0].clientY : event.clientY;
+
+            previousMousePosition = { x: clientX, y: clientY };
+        }
+
+        function onPointerMove(event) {
+            const clientX = event.touches ? event.touches[0].clientX : event.clientX;
+            const clientY = event.touches ? event.touches[0].clientY : event.clientY;
+
+            pointer.x = (clientX / window.innerWidth) * 2 - 1;
+            pointer.y = -(clientY / window.innerHeight) * 2 + 1;
+
+            if (isDragging) {
+                velocity.x = (clientX - previousMousePosition.x) * CONFIG.dragSensitivity;
+                velocity.y = (clientY - previousMousePosition.y) * CONFIG.dragSensitivity;
+
+                previousMousePosition = { x: clientX, y: clientY };
+            }
+        }
+
+        function onPointerUp() {
+            isDragging = false;
+        }
+
+        function onClick() {
+            if (Math.abs(velocity.x) > 0.01 || Math.abs(velocity.y) > 0.01) return;
+            if (hoveredMesh) {
+                const tex = hoveredMesh.userData.material.map;
+                modalImg.src = tex ? tex.image.src : '';
+                openModal();
+            }
+        }
+
+        function onScroll() {}
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+
+            camera.position.z = window.innerWidth < 768 ? 22 : 28;
+        }
+
+        function checkIntersection() {
+            raycaster.setFromCamera(pointer, camera);
+            const intersects = raycaster.intersectObjects(meshes);
+
+            if (intersects.length > 0) {
+                const object = intersects[0].object;
+
+                if (hoveredMesh !== object) {
+                    hoveredMesh = object;
+                    document.body.style.cursor = 'pointer';
+                    updateTooltip(object.userData);
+                }
+
+                updateTooltipPosition(object);
+            } else {
+                if (hoveredMesh) {
+                    hoveredMesh = null;
+                    document.body.style.cursor = 'default';
+                    tooltip.classList.remove('active');
+                }
+            }
+        }
+
+        function updateTooltip(data) {
+            tooltipTitle.textContent = data.title;
+            tooltipCategory.textContent = data.category;
+            tooltip.classList.add('active');
+        }
+
+        function updateTooltipPosition(mesh) {
+            const vector = new THREE.Vector3();
+            mesh.getWorldPosition(vector);
+            vector.z += 2;
+
+            vector.project(camera);
+
+            tooltip.style.left = `${(vector.x * .5 + .5) * window.innerWidth}px`;
+            tooltip.style.top = `${(-(vector.y * .5) + .5) * window.innerHeight}px`;
+        }
+
+        window.openModal = function () {
+            modal.classList.add('active');
+        };
+
+        window.closeModal = function () {
+            modal.classList.remove('active');
+        };
+
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) closeModal();
+        });
+
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', init);
+        } else {
+            init();
+        }
+
+        // اگر بارگذاری خیلی طول کشید، بعد از ۵ ثانیه لودینگ را مخفی کن
+        setTimeout(() => loadingEl.classList.add('hide'), 6000);
+    </script>
+</body>
+</html>
