@@ -143,6 +143,8 @@
             imageGroup = new THREE.Group();
             scene.add(imageGroup);
 
+            addStarfield();
+
             projectCount.textContent = `${CONFIG.imageCount} عکس به یاد ماندنی`;
 
             generateImages();
@@ -158,6 +160,21 @@
             window.addEventListener('touchend', onPointerUp);
 
             animate();
+        }
+
+        function addStarfield() {
+            const starCount = 500;
+            const positions = new Float32Array(starCount * 3);
+            for (let i = 0; i < starCount; i++) {
+                positions[i * 3] = (Math.random() - 0.5) * 120;
+                positions[i * 3 + 1] = (Math.random() - 0.5) * 120;
+                positions[i * 3 + 2] = (Math.random() - 0.5) * 120 - 20;
+            }
+            const starGeo = new THREE.BufferGeometry();
+            starGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            const starMat = new THREE.PointsMaterial({ color: 0xffd700, size: 0.06, transparent: true, opacity: 0.35 });
+            const stars = new THREE.Points(starGeo, starMat);
+            scene.add(stars);
         }
 
         function generateImages() {
@@ -193,11 +210,11 @@
                     if (loadedCount >= CONFIG.imageCount) loadingEl.classList.add('hide');
                 });
 
-                // پخش اولیه‌ی تصادفی (ورود پراکنده - "پلی شدن")
-                const scatterRadius = 30;
-                const initX = (Math.random() - 0.5) * scatterRadius * 1.6;
-                const initY = (Math.random() - 0.5) * scatterRadius;
-                const initZ = (Math.random() - 0.5) * 20 - 8;
+                // پخش اولیه‌ی تصادفی (ورود پراکنده - "پلی شدن") - محدوده‌ی نزدیک‌تر به دوربین تا از ابتدا دیده شوند
+                const scatterRadius = 13;
+                const initX = (Math.random() - 0.5) * scatterRadius * 1.7;
+                const initY = (Math.random() - 0.5) * scatterRadius * 1.3;
+                const initZ = (Math.random() - 0.5) * 10 - 2;
 
                 // چیدمان نهایی: کره‌ای جمع و منظم (Fibonacci sphere)
                 const y = 1 - (i / (CONFIG.imageCount - 1)) * 2;
