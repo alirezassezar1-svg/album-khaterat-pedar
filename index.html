@@ -167,19 +167,20 @@
 
     // حالت اولیه: همه‌ی عکس‌ها کوچک و بهم‌فشرده وسط صفحه
     positions.forEach(({ fig }) => {
+      fig.style.transitionDelay = '0ms';
       fig.style.transform = `translate(${centerX}px, ${centerY}px) scale(0.28)`;
     });
 
-    // پس از یک فریم، به فرم نهاییِ پخش‌شده جابه‌جا می‌شوند (جلوه‌ی converge)
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        positions.forEach(({ fig, x, y }, i) => {
-          fig.style.transitionDelay = (i * 28) + 'ms';
-          fig.classList.add('ready');
-          fig.style.transform = `translate(${x}px, ${y}px) scale(1)`;
-        });
+    // مجبور کردن مرورگر به رندر همین حالت (reflow) قبل از شروع ترنزیشن نهایی
+    void grid.offsetHeight;
+
+    setTimeout(() => {
+      positions.forEach(({ fig, x, y }, i) => {
+        fig.style.transitionDelay = (i * 28) + 'ms';
+        fig.classList.add('ready');
+        fig.style.transform = `translate(${x}px, ${y}px) scale(1)`;
       });
-    });
+    }, 80);
   });
 
   let resizeTimer;
